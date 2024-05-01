@@ -14,14 +14,14 @@
 #include <stdlib.h>
 
 // //Pin declarations
-// #define I2C_SDA 1
-// #define I2C_SCL 2
-// #define I2C_RST_PIN 4
+ #define I2C_SDA 1
+ #define I2C_SCL 2
+ #define I2C_RST_PIN 4
 // #define PWREN_PIN 5
 // #define LPN_PIN 6
-// #define DC1_PIN 14
-// #define DC2_PIN 15
-// #define SERVO_PIN 40
+ #define DC1_PIN 14
+ #define DC2_PIN 15
+ #define SERVO_PIN 40
 
 // //Constants:
 // #define refelction_threshold 50
@@ -34,13 +34,69 @@ static TaskHandle_t longTOFHandler = NULL;
 static TaskHandle_t turnHandler = NULL;
 static TaskHandle_t sensorHandler = NULL;
 
-uint initialTime = 6000;
-uint lengthTime = 5000;
+uint initialDriveTime = 6000;
+uint lengthTime = 10000;
 uint turnTime = 1000;
-bool validDetection = False;
+bool validDetection = false;
+float IMUerror=0.0;
+float heading =0.0;
+float headingDEG=0.0;
+int turnAngle=30;
+
+bool goingToCan = false;
+
+CytronMD DCmotor(PWM_PWM,DC1_PIN,DC2_PIN);
+Adafruit_MPU6050 mpu;
+Servo steerServo;
+
 
 void setup() {                  //STRICTLY SETUP CODE
+
   Serial.begin(115200);
+
+  Wire.begin(I2C_SDA,I2C_SCL);
+  //MPU SETUP
+
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      Serial.println("Searching for MPU");
+      delay(10);
+    }
+  }
+  mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_10_HZ);
+  delay(500);
+
+
+  //Calibration Step                      
+  for (int i=0; i<20; i++){
+    sensors_event_t a,g,temp;
+    mpu.getEvent(&a,&g,&temp); 
+    Serial.print("Calibration reading:");
+    Serial.println(g.gyro.x);
+    Serial.println(i);
+    delay(100);
+  
+    IMUerror=IMUerror + g.gyro.x;
+     Serial.print("IMU ERROR: ");
+    Serial.println(IMUerror);
+  }
+ 
+  IMUerror=IMUerror/20;
+
+  Serial.print("IMU ERROR: ");
+  Serial.println(IMUerror);
+  delay(2000);
+  //STEER SERVO SETUP
+
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  steerServo.setPeriodHertz(50);    // standard 50 hz servo
+  steerServo.attach(SERVO_PIN, 1000, 2000);
 
 
   //TaskCreation
@@ -98,21 +154,14 @@ void taskManager(void * pvParameters){
   //Initial Drive
   xTaskNotifyGive(driveHandler);
 
-  delay(5000);
-
-  vTaskSuspend(driveHandler);
-
-
-  //loop
-    //drive for length
-    //turn
-
+  delay(initialDriveTime);
 
   xTaskNotifyGive(shortTOFHandler);
   xTaskNotifyGive(longTOFHandler);
   delay(lengthTime);
 
 
+  //turn
   vTaskSuspend(shortTOFHandler);
   vTaskSuspend(longTOFHandler);
   
@@ -123,10 +172,8 @@ void taskManager(void * pvParameters){
   vTaskResume(driveHandler);
   vTaskResume(shortTOFHandler);
   vTaskResume(longTOFHandler);
-  vTaskResume( )
 
 
-  
   //Restarts the driving for a search
 
   // xTaskNotifyGive(turnHandler);
@@ -136,18 +183,36 @@ void taskManager(void * pvParameters){
 
 
 void driveManager(void * pvParameters){
-  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
+  int Kp = 1;
+  int servoAngle=45;
+  float err =0.0;
   while(1){
     Serial.println("Driving"); 
-    //Set motor PWM
+    DCmotor.setSpeed(255);
 
-    if (validDetection==True){
+    //Sample IMU
+    sensors_event_t a,g,temp;
+    mpu.getEvent(&a,&g,&temp);  
+    Serial.print("Measure:");
+    Serial.println(g.gyro.x);                       
+    heading=(heading+(IMUerror-g.gyro.x)*0.1);
+    Serial.print("Heading:");
+    headingDEG = heading *(180/3.14159);
+    Serial.println(headingDEG);
+
+    if (validDetection==true){
         //PID - detection
     }
     else
     {
-        //PID - IMU 
+      //IMU PID Loop
+      err = headingDEG;
+      Serial.print("Error: ");
+      Serial.println(err);
+      servoAngle = 45-err*Kp;
+      Serial.println("Servo angle:");
+      Serial.println(servoAngle);
+      steerServo.write(servoAngle);
     }
     delay(100);
   }
@@ -157,9 +222,14 @@ void driveManager(void * pvParameters){
 
 void turn(void * pvParameters){
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    while(1){
+
+  while(1){
+    if (goingToCan == false){
+      steerServo.write(turnAngle);
       Serial.println("Turn"); 
-      vTaskSuspend(NULL);
+    }
+    vTaskSuspend(NULL);
+
   }
 }
 
@@ -169,22 +239,23 @@ void shortTOF(void * pvParameters){
   while(1){
     //sample sensor
     Serial.println("Short TOF sent"); 
-    delay(200);
+    delay(100);
   }
     
   
 }
 
 void longTOF(void * pvParameters){
-  
-  //Code before here should run on startup?
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
   while(1){
     //sample sensor
       Serial.println("Long TOF sent"); 
-      delay(1000);
+      delay(500);
   }
-}
+
+  }
+
 
 void loop() {
 }
