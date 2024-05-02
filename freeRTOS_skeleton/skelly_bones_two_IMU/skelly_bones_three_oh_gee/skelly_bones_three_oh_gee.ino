@@ -76,6 +76,7 @@ static TaskHandle_t turnHandler = NULL;
 static TaskHandle_t sensorHandler = NULL;
 static TaskHandle_t shortTOFprocessHandler = NULL;
 static TaskHandle_t longTOFprocessHandler = NULL;
+static TaskHandle_t taskHandler = NULL;
 
 QueueHandle_t srTOFrawQ;
 QueueHandle_t lrTOFrawQ;
@@ -91,8 +92,6 @@ float IMUerror=0.0;
 float heading =0.0;
 float headingDEG=0.0;
 int turnAngle=30;
-
-bool goingToCan = false;
 
 //srTOF universal temporary string
 char temp_str[64];
@@ -122,7 +121,8 @@ Valid_target_Info target_info;
 
 void setup() {                  //STRICTLY SETUP CODE
   //start console serial
-  Serial.begin(115200);
+  Serial.begin(921600);
+  Serial.println("Starting Setup");
 
   //Start I2C bus
   Wire.begin(I2C_SDA,I2C_SCL);
@@ -142,27 +142,30 @@ void setup() {                  //STRICTLY SETUP CODE
   delay(500);
 
 
-  //Calibration Step                      
+  //Calibration Step 
+  Serial.println("Calibrating IMU");                     
   for (int i=0; i<20; i++){
     sensors_event_t a,g,temp;
     mpu.getEvent(&a,&g,&temp); 
-    Serial.print("Calibration reading:");
-    Serial.println(g.gyro.x);
-    Serial.println(i);
+    //Serial.print("Calibration reading:");
+    //Serial.println(g.gyro.x);
+    //Serial.println(i);
     delay(100);
   
     IMUerror=IMUerror + g.gyro.x;
-     Serial.print("IMU ERROR: ");
-    Serial.println(IMUerror);
+    //Serial.print("IMU ERROR: ");
+    //Serial.println(IMUerror);
   }
  
   IMUerror=IMUerror/20;
 
-  Serial.print("IMU ERROR: ");
-  Serial.println(IMUerror);
-  delay(2000);
+  //Serial.print("IMU ERROR: ");
+  //Serial.println(IMUerror);
+  //delay(2000);
 
+  Serial.println("Calibrating IMU finished");
 
+  Serial.println("Setting up Servos");
   //STEER SERVO SETUP
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
@@ -175,12 +178,17 @@ void setup() {                  //STRICTLY SETUP CODE
   myservo.setPeriodHertz(50);           // standard 50 hz servo
 	myservo.attach(servoPin, 400, 2420);  // attaches servo on servoPin to servo object
 
+  Serial.println("Setting up Tofs");
+
   //LR TOF setup
   Serial2.begin(921600, SERIAL_8N1, 16, 17);
 
   //srTOF setup
   shortTOFsetup();
-  
+
+  Serial.println("Tof Setup done"); 
+
+
 
   //create Queues
   srTOFrawQ = xQueueCreate(1, sizeof(Valid_target_Info));
@@ -189,12 +197,14 @@ void setup() {                  //STRICTLY SETUP CODE
   lrTOFprocQ = xQueueCreate(1, sizeof(lrTOFrawData));
   combinedSensorQ = xQueueCreate(1, sizeof(targets));
 
+  Serial.println("Queues created");
+
   //TaskCreation
   xTaskCreatePinnedToCore(  driveManager,       //Function Name
                 "drivingManager",     //Task Name
                 20000,         //Stack size
                 NULL,         //Task input parameter
-                2,          //Task priority 
+                5,          //Task priority 
                 &driveHandler, //Task handle
                 0);      //Core
 
@@ -202,7 +212,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "shortTOF sensing",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input parameter
-                0,            //Task priority 
+                5,            //Task priority 
                 &shortTOFHandler,  //Task handle
                 1);      //Core
 
@@ -211,7 +221,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "longTOF sensing",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input parameter
-                0,            //Task priority
+                5,            //Task priority
                 &longTOFHandler,    //Task handle
                 1);         //Core
 
@@ -219,7 +229,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "shortTOF processing",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input parameter
-                1,            //Task priority 
+                6,            //Task priority 
                 &shortTOFprocessHandler,  //Task handle
                 1);      //Core
 
@@ -228,7 +238,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "longTOF processing",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input parameter
-                1,            //Task priority
+                6,            //Task priority
                 &longTOFprocessHandler,    //Task handle
                 1);         //Core
 
@@ -237,7 +247,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "turn",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input parameter
-                1,              //Task priority 
+                5,              //Task priority 
                 &turnHandler,   //Task handle
                 0);             //Core
 
@@ -253,58 +263,71 @@ void setup() {                  //STRICTLY SETUP CODE
                 "task manager",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input param
-                2,            //Task priority 
-                NULL,         //Task handle
+                5,            //Task priority 
+                &taskHandler,         //Task handle
                 0);      //Core
 
 
   //start the machine
-  //vTaskStartScheduler();
-  Serial.println("here sched2");
+  
+  Serial.println("All tasks are created");
+  xTaskNotifyGive(taskHandler);
 
 }
 
 
 
 void taskManager(void * pvParameters){
-  // WHILE LOOP TO POLL FOR START SIGNAL
+  //make sure everything is initiallised
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
 
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  Serial.println("Task manager is ready for user input");
+
+  //this delay should be replaced by button input
+  vTaskDelay(3000 / portTICK_PERIOD_MS);
+  
+  // WHILE LOOP TO POLL FOR START SIGNAL
+  Serial.println("User has activated driving!");
 
   //Initial Drive
-  Serial.println("here drive");
   xTaskNotifyGive(driveHandler);
+
 
   //wait until we are in search area
   vTaskDelay(initialDriveTime*(2/3) / portTICK_PERIOD_MS);
 
-  
+  //start sensing SR
+  xTaskNotifyGive(shortTOFHandler);
+
   //serpentine loop
   while(1){
-    //start sensing SR
-    xTaskNotifyGive(shortTOFHandler);
+    
 
     //do sweep of LR
     vTaskSuspend(driveHandler);
     xTaskNotifyGive(longTOFHandler);
 
-    //time until we've gone through hit zone
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    //time until we've gone to hit zone
     vTaskDelay(initialDriveTime*(1/3) / portTICK_PERIOD_MS);
 
-    //delay(lengthTime);
+    //time until we've gone through entire zone
     vTaskDelay(lengthTime / portTICK_PERIOD_MS);
 
 
     //turn
-    //vTaskSuspend(shortTOFHandler);
+    vTaskSuspend(shortTOFHandler);
     //vTaskSuspend(longTOFHandler);
   
-    vTaskSuspend(driveHandler);
+    //vTaskSuspend(driveHandler);
     xTaskNotifyGive(turnHandler);
     vTaskDelay(turnTime / portTICK_PERIOD_MS);
 
-   //Start new length
-    vTaskResume(driveHandler);
-    //vTaskResume(shortTOFHandler);
+    //Start new length
+    //vTaskResume(driveHandler);
+    vTaskResume(shortTOFHandler);
     //vTaskResume(longTOFHandler);
 
 
@@ -325,34 +348,37 @@ void driveManager(void * pvParameters){
   bool canApproach=false;
   int approachTimer=0;
 
-  Serial.print("druve setup");
+  
+  Serial.println("Drive task ready");
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  Serial.println("Starting driving task");
 
   while(1){
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    
+    Serial.println("New drive control iteration");
 
-    Serial.println("Driving"); 
-    Serial.println("here1 ");
     DCmotor.setSpeed(255);
-    Serial.println("here2 ");
+    
     //Sample IMU
     sensors_event_t a,g,temp;
-    Serial.println("here3 "); 
     mpu.getEvent(&a,&g,&temp); 
     
-    Serial.print("Measure:");
-    Serial.println(g.gyro.x);                       
+    //Serial.print("Measure:");
+    //Serial.println(g.gyro.x);                       
     heading=(heading+(IMUerror-g.gyro.x)*0.1);
-    Serial.print("Heading:");
+    //Serial.print("Heading:");
     headingDEG = heading *(180/3.14159);
-    Serial.println(headingDEG);
+    //Serial.println(headingDEG);
 
 
-    targets new_targets;
+    
 
     //Set heading - either can if target info is available or heading if not 
 
-    //Global variable is preferrable to queue in this instance since drive manager runs periodically 
-    if(xQueueReceive(combinedSensorQ, &new_targets, 0) == pdPASS || goingToCan == true){
+    //store new targets
+    targets new_targets;
+
+    if(xQueueReceive(combinedSensorQ, &new_targets, 0) == pdPASS  && new_targets.black_distance!=99999 ){
       err = new_targets.black_angle;
       canApproach = true;
       approachTimer=0;
@@ -367,15 +393,15 @@ void driveManager(void * pvParameters){
     if (canApproach==true){
       approachTimer+=1;
     }
-    else if (canApproach>30){   //maintains angle for three seconds (30 * 100 ms)
+    else if (approachTimer>30){   //maintains angle for three seconds (30 * 100 ms)
       canApproach=false;
       approachTimer=0;
       err= headingDEG;
     }
 
     servoAngle = 45-err*Kp;
+    steerServo.write(servoAngle);
 
-    //is this for debouncing?
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
@@ -384,15 +410,18 @@ void driveManager(void * pvParameters){
 
 void turn(void * pvParameters){
 
+  Serial.println("Turn task ready");
+
   //suspend Task indefinitely until called by taskmanager
-  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  
 
   while(1){
-    if (goingToCan == false){
-      steerServo.write(turnAngle);
-      Serial.println("Turn"); 
-    }
-    vTaskSuspend(NULL);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    Serial.println("Turn task called");
+
+    steerServo.write(turnAngle);
+
+    //vTaskSuspend(NULL);
 
   }
 }
@@ -403,7 +432,7 @@ void shortTOFsetup(void){
   //parameters for setup procedure
   int16_t status, i, j, k;
   float angle, angle_step, fov = 85, num_zones = 16;
-  Serial.println("here 1");
+
   // Configure VL53L5CX satellite component.
   sensor_vl53l5cx_sat_1.begin();
   sensor_vl53l5cx_sat_2.begin();
@@ -423,7 +452,7 @@ void shortTOFsetup(void){
     snprintf(temp_str, sizeof(temp_str), "vl53l5cx_set_i2c_address failed, status %u\r\n", status);
     SerialPort.print(temp_str);
   }
-  Serial.println("here 2");
+  
   digitalWrite(LPN_PIN_1, LOW);    // disable VL53L5CX_1
   digitalWrite(LPN_PIN_2, HIGH);   // enable VL53L5CX_2
   
@@ -486,11 +515,11 @@ void shortTOFsetup(void){
     }
     angle += angle_step;
   } 
-  Serial.println("here short tof setup");
+  
 }
 
 void shortTOF(void * pvParameters){
-  Serial.println("tofs sstarted");
+  
   VL53L5CX_ResultsData Results_1;
   VL53L5CX_ResultsData Results_2;
   uint8_t NewDataReady = 0;
@@ -502,11 +531,15 @@ void shortTOF(void * pvParameters){
 
   //Code before here should run on startup
 
+  Serial.println("SR TOF task ready");
   //suspend Task indefinitely until called by taskmanager
+  
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   Serial.println("started short tofs");
 
   while(1){
+    
+    Serial.println("New SR TOF scan");
 
     NewDataReady = 0;
     sensor_vl53l5cx_sat_1.vl53l5cx_check_data_ready(&NewDataReady);
@@ -570,7 +603,8 @@ void shortTOF(void * pvParameters){
     else{
       Serial.println("Short Range TOF Raw Queue TX fault"); //error message in case Q is full
     }
-  
+
+    vTaskDelay(30 / portTICK_PERIOD_MS);
   }
   
 }
@@ -578,12 +612,13 @@ void shortTOF(void * pvParameters){
 void shortTOFprocess(void * pvParameters){
   
   //Code before here should run on startup
+   Serial.println("SR TOF processing task ready");
 
   while(1)
   {
-
     //suspend Task indefinitely until called by taskmanager
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    Serial.println("SR TOF data processing");
 
     Valid_target_Info target_info;
     int16_t status, i, j, k;
@@ -591,9 +626,6 @@ void shortTOFprocess(void * pvParameters){
     //read new data from Queue once notified by RX
     if(xQueueReceive(srTOFrawQ, &target_info, 0) == pdPASS)
     {
-      //processing goes in here
-
-
       //search array for closest black and white zones
       //reset from last iterration
       target_info.closest_white_distance = 99999;
@@ -618,32 +650,33 @@ void shortTOFprocess(void * pvParameters){
       } 
 
 
-      //print validated distance array
-      for (j = 0; j < 8; j++) 
-      {
-        for (k = 0; k < 16; k++) 
-        {
-            snprintf(temp_str, 20, "%04d", target_info.target_distance[j][k]);
-            SerialPort.print(temp_str);
-            SerialPort.print("\t");
-        }
-        SerialPort.print("\n");
-      }
+      // //print validated distance array
 
-      SerialPort.print("\n");
-      //print angle array
-      for (j = 0; j < 8; j++) 
-      {
-        for (k = 0; k < 16; k++) 
-        {
-            snprintf(temp_str, 20, "%04d", target_info.target_angle[j][k]);
-            SerialPort.print(temp_str);
-            SerialPort.print("\t");
-        }
-        SerialPort.print("\n");
-      }  
-      SerialPort.print("\n");
-      SerialPort.print("\n");
+      // for (j = 0; j < 8; j++) 
+      // {
+      //   for (k = 0; k < 16; k++) 
+      //   {
+      //       snprintf(temp_str, 20, "%04d", target_info.target_distance[j][k]);
+      //       SerialPort.print(temp_str);
+      //       SerialPort.print("\t");
+      //   }
+      //   SerialPort.print("\n");
+      // }
+
+      // SerialPort.print("\n");
+      // //print angle array
+      // for (j = 0; j < 8; j++) 
+      // {
+      //   for (k = 0; k < 16; k++) 
+      //   {
+      //       snprintf(temp_str, 20, "%04d", target_info.target_angle[j][k]);
+      //       SerialPort.print(temp_str);
+      //       SerialPort.print("\t");
+      //   }
+      //   SerialPort.print("\n");
+      // }  
+      // SerialPort.print("\n");
+      // SerialPort.print("\n");
     
       targets outputData;
       outputData.black_angle = target_info.closest_black_angle;
@@ -652,22 +685,21 @@ void shortTOFprocess(void * pvParameters){
       outputData.white_distance = target_info.closest_white_distance;
 
       //pass data to decision function
-      if(xQueueSend(combinedSensorQ, &outputData, 0) == pdPASS)
+      if(xQueueOverwrite(combinedSensorQ, &outputData) == pdPASS)
       {
       //start processing task
       //xTaskNotifyGive(sensorHandler);
-      vTaskSuspend(NULL);
+      Serial.println("Short Range TOF Data passed on successfully");
       }
       else
       {
         Serial.println("Short Range TOF Proc Queue TX fault"); //error message in case Q is full
-        vTaskSuspend(NULL);
       }
     }
     else
     {
       Serial.println("Short Range TOF Raw Queue RX fault"); //error message in case Q is full
-      vTaskSuspend(NULL);
+      
     }
   }
   
@@ -727,17 +759,22 @@ void longTOF(void * pvParameters){
   unsigned long TOF_distances[360] = {0};   // length double of scan_angle
   unsigned int TOF_strengths[360] = {0};    // length double of scan_angle
 
+  Serial.println("LR TOF task ready");
   //Code before here should run on startup?
-  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  
 
   while(1)
   {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    Serial.println("LR TOF scan called");
+
     //stop driving
     DCmotor.setSpeed(0);
     
     // SWEEP
     long last_valid_dist = 1500;  // mm
-    for (pos = 0; pos <= 2*scan_angle; pos += 1) { // goes from 0 degrees to 180 degrees
+    for (pos = 0; pos < 2*scan_angle; pos += 1)
+    { // goes from 0 degrees to 180 degrees
       myservo.write((float)pos / 2.0);   // go to position (half degree increments)
       // delay(1);             // delay to allow reaching position
       Serial.println((float)pos/2.0);
@@ -800,6 +837,8 @@ void longTOF(void * pvParameters){
         }
 
       }
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    
     }
 
     //make sure sweep is done
@@ -824,19 +863,21 @@ void longTOF(void * pvParameters){
       xTaskNotifyGive(longTOFprocessHandler);
       //restart driving
       xTaskNotifyGive(driveHandler);
+      xTaskNotifyGive(taskHandler);
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
     }
     else{
       Serial.println("Long Range TOF Raw Queue TX fault"); //error message in case Q is full
       //restart driving
       xTaskNotifyGive(driveHandler);
+      xTaskNotifyGive(taskHandler);
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 
   } 
 
 }
-
-
 
 
 void longTOFprocess(void * pvParameters){
@@ -865,104 +906,113 @@ void longTOFprocess(void * pvParameters){
   int candidate_idxs[10];    // store candidate indexes of original data array
   float avg_stren_offset = 10.0;    // brightness filter offset
   
+  Serial.println("LR TOF processing task ready");
   //Code before here should run on startup
-  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  
 
   while(1){
+
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    Serial.println("LR TOF processing task started");
 
     //suspend Task indefinitely until called by taskmanager
 
     lrTOFrawData inputData;
 
     //read new data from Queue once notified by RX
-    if(xQueueReceive(lrTOFrawQ, &inputData, 0) == pdPASS){
-      //processing goes in here
-
-      // DISPLAY DATA
-    for (int k = 0; k <= 2*scan_angle; k++)
+    if(xQueueReceive(lrTOFrawQ, &inputData, 0) == pdPASS)
     {
-      Serial.print(k/2.0);
-      Serial.print(" deg");
-      Serial.print("     ");
-      Serial.print(inputData.TOF_distances[k], DEC);
-      Serial.println(" mm");
-    }
+        //processing goes in here
 
-    Serial.println("Scanning done");
-    delay(100);
-    Serial.println("Processing...");
-
-
-    // --- PROCESSING ---
-    int idx = 0;  // index of the candidate in the candidate_idxs array
-    int edge_idx1 = 0;
-    int edge_idx2 = 0;
-    float edge_ang_width;
-    float edges_ang_pos;
-    for (int j = 1; j < 2*scan_angle - 1; j++)
-    {
-
-      // compute derivatives distance
-      if (inputData.TOF_distances[j] > threshold_dist) {
-        TOF_derivatives[j] = 0;
-      } else {
-        TOF_derivatives[j] = inputData.TOF_distances[j+1] - inputData.TOF_distances[j]; // d(dist)/d(alpha)
+        // DISPLAY DATA
+      for (int k = 0; k < 2*scan_angle; k++)
+      {
+        Serial.print(k/2.0);
+        Serial.print(" deg");
+        Serial.print("     ");
+        Serial.print(inputData.TOF_distances[k], DEC);
+        Serial.println(" mm");
       }
-      
-      // store latest -ve edge
-      if (TOF_derivatives[j] < 0 && abs(TOF_derivatives[j]) > threshold_der) {
-        edge_der1 = TOF_derivatives[j];
-        // edge_dist1 = TOF_distances[j+1];
-        edge_alpha1 = (float)j / 2.0;  // scan precision is 0.5 deg
-        // edge_stren_der1 = TOF_stren_derivatives[j+1];
-        // edge_stren1 = TOF_strengths[j+1];
-        edge_idx1 = j+1;
 
-      } 
-      // store latest +ve edge
-      else if (TOF_derivatives[j] > 0 && abs(TOF_derivatives[j]) > threshold_der) {
-        edge_der2 = TOF_derivatives[j];
-        // edge_dist2 = TOF_distances[j];
-        edge_alpha2 = (float)j / 2.0;  // scan precision is 0.5 deg
-        // edge_stren_der2 = TOF_stren_derivatives[j];
-        // edge_stren2 = TOF_strengths[j];
-        edge_idx2 = j;
 
-      }
-      // if -ve & +ve edges found, second edge is after first, and second edge derivative is -ve
-      if (abs(edge_der1) > threshold_der && abs(edge_der2) > threshold_der && edge_alpha2 > edge_alpha1 && edge_der1 < 0) {
-        edges_ang_width = edge_alpha2 - edge_alpha1;
-        edges_ang_pos = edge_alpha2 - edges_ang_width/2.0;  // angular positon of object
-        edges_dist = (edge_dist1 + edge_dist2) / 2.0;       // distance of object
-        // edges_stren = ((float)edge_stren_dist2 + (float)edge_stren_dist1)/2.0;  // reflectivity of object
 
-        // COMPARE TO EXPECTED WIDTH HERE
-        // if (edges_ang_width >)
-        if (verifyWidth(edges_dist, edges_ang_width)) {
-          Serial.println("Potential candidate");
-          Serial.println(edges_ang_pos, DEC);
-          Serial.println(edges_dist, DEC);
-          Serial.println("");
-          Serial.println(edge_dist1, DEC);
-          Serial.println(edge_dist2, DEC);
+      // --- PROCESSING ---
+      int idx = 0;  // index of the candidate in the candidate_idxs array
+      int edge_idx1 = 0;
+      int edge_idx2 = 0;
+      float edge_ang_width;
+      float edges_ang_pos;
+      for (int j = 1; j < 2*scan_angle - 1; j++)
+      {
 
-          // HERE APPEND TO CANDIDATES ARRAY
-          candidate_idxs[idx] = int((edge_idx1 - edge_idx2) / 2);
+        // compute derivatives distance
+        if (inputData.TOF_distances[j] > threshold_dist)
+        {
+          TOF_derivatives[j] = 0;
+        }
+        else
+        {
+          TOF_derivatives[j] = inputData.TOF_distances[j+1] - inputData.TOF_distances[j]; // d(dist)/d(alpha)
+        }
+        
+        // store latest -ve edge
+        if (TOF_derivatives[j] < 0 && abs(TOF_derivatives[j]) > threshold_der)
+        {
+          edge_der1 = TOF_derivatives[j];
+          // edge_dist1 = TOF_distances[j+1];
+          edge_alpha1 = (float)j / 2.0;  // scan precision is 0.5 deg
+          // edge_stren_der1 = TOF_stren_derivatives[j+1];
+          // edge_stren1 = TOF_strengths[j+1];
+          edge_idx1 = j+1;
+
+        } 
+        // store latest +ve edge
+        else if (TOF_derivatives[j] > 0 && abs(TOF_derivatives[j]) > threshold_der)
+        {
+          edge_der2 = TOF_derivatives[j];
+          // edge_dist2 = TOF_distances[j];
+          edge_alpha2 = (float)j / 2.0;  // scan precision is 0.5 deg
+          // edge_stren_der2 = TOF_stren_derivatives[j];
+          // edge_stren2 = TOF_strengths[j];
+          edge_idx2 = j;
+
+        }
+        // if -ve & +ve edges found, second edge is after first, and second edge derivative is -ve
+        if (abs(edge_der1) > threshold_der && abs(edge_der2) > threshold_der && edge_alpha2 > edge_alpha1 && edge_der1 < 0) {
+          edges_ang_width = edge_alpha2 - edge_alpha1;
+          edges_ang_pos = edge_alpha2 - edges_ang_width/2.0;  // angular positon of object
+          edges_dist = (edge_dist1 + edge_dist2) / 2.0;       // distance of object
+          // edges_stren = ((float)edge_stren_dist2 + (float)edge_stren_dist1)/2.0;  // reflectivity of object
+
+          // COMPARE TO EXPECTED WIDTH HERE
+          // if (edges_ang_width >)
+          if (verifyWidth(edges_dist, edges_ang_width)) {
+            Serial.println("Potential candidate");
+            Serial.println(edges_ang_pos, DEC);
+            Serial.println(edges_dist, DEC);
+            Serial.println("");
+            Serial.println(edge_dist1, DEC);
+            Serial.println(edge_dist2, DEC);
+
+            // HERE APPEND TO CANDIDATES ARRAY
+            candidate_idxs[idx] = int((edge_idx1 - edge_idx2) / 2);
+          }
+
+          edge_der1 = 0;
+          edge_der2 = 0;
+          edge_alpha1 = 0.0;
+          edge_alpha2 = 0.0;
         }
 
-        edge_der1 = 0;
-        edge_der2 = 0;
-        edge_alpha1 = 0.0;
-        edge_alpha2 = 0.0;
-      }
+        
 
+        // HERE NEED TO FILTER 1 BLACK and 1 WHITE TARGET
+        // idea: black done and white done check, with loop
+
+      }
       //create output structure
       targets outputData;
-
-      // HERE NEED TO FILTER 1 BLACK and 1 WHITE TARGET
-      // idea: black done and white done check, with loop
-
-      for (uint i = 0; i <= 10; i++)
+      for (uint i = 0; i < 10; i++)
       {
         int start_idx;
         int end_idx;
@@ -990,38 +1040,39 @@ void longTOFprocess(void * pvParameters){
         mid_idx = candidate_idxs[i];
         
         // white distances
-        if (inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist) {
+        if (inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist)
+        {
           outputData.white_angle = int(float(mid_idx)/2.0);
           outputData.white_distance = inputData.TOF_distances[mid_idx];
         }
         // black distances
-        else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist){
+        else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist)
+        {
           outputData.black_angle = int(float(mid_idx)/2.0);
           outputData.black_distance = inputData.TOF_distances[mid_idx];
         }
 
+        
+
+        
+
+        
       }
-
-      
-
       //pass data to decision function
       if(xQueueSend(combinedSensorQ, &outputData, 0) == pdPASS)
       {
         //start processing task
         xTaskNotifyGive(sensorHandler);
-        vTaskSuspend(NULL);
       }
       else
       {
         Serial.println("Long Range TOF Proc Queue TX fault"); //error message in case Q is full
-        vTaskSuspend(NULL);
       }
+     
     }
-  }
-
-    else{
+    else
+    {
       Serial.println("Long Range TOF Raw Queue RX fault"); //error message in case Q is full
-      vTaskSuspend(NULL);
     }
     
   }
@@ -1068,7 +1119,6 @@ void longTOFprocess(void * pvParameters){
 //     //sending data to Driving side
 //     if(xQueueSend(combinedSensorQ, &output_data, 0) == pdPASS){
 //       Serial.println("New Target data successfully sent");
-//       goingToCan=true;
 //       vTaskSuspend(NULL);
 //     }
 //     else{
