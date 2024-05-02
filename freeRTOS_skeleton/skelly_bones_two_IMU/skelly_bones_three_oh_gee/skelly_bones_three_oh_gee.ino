@@ -18,9 +18,8 @@
 // //Pin declarations I2C
  #define I2C_SDA 1
  #define I2C_SCL 2
- #define I2C_RST_PIN 4
-// #define PWREN_PIN 5
-// #define LPN_PIN 6
+ //#define I2C_RST_PIN 4
+
  #define DC1_PIN 14
  #define DC2_PIN 15
  #define SERVO_PIN 40
@@ -28,7 +27,7 @@
  //srTOF configs
 #define vl53l5cx_frequency 1
 
-#define LPN_PIN_1 3
+#define LPN_PIN_1 6
 #define I2C_RST_PIN_1 4
 #define I2C_Address_1 0x28
 
