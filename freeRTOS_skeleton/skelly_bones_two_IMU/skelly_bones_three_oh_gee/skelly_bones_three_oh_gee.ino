@@ -46,7 +46,7 @@ typedef struct
     int16_t target_angle[8][16];
     uint16_t target_reflectance[8][16];
     
-    uint16_t closest_white_distance = 9999, closest_black_distance = 9999;
+    uint16_t closest_white_distance = 99999, closest_black_distance = 99999;
     float closest_white_angle = 0, closest_black_angle = 0;
 
 } Valid_target_Info;
@@ -59,10 +59,10 @@ typedef struct{
 
 //unified Target typedef
 typedef struct{
-    uint16_t black_angle;
-    uint16_t black_distance;
-    uint16_t white_angle;
-    uint16_t white_distance;
+    uint16_t black_angle = 0;
+    uint16_t black_distance = 99999;
+    uint16_t white_angle = 0;
+    uint16_t white_distance = 99999;
 } targets;
 
 //taskHandlers
@@ -222,13 +222,13 @@ void setup() {                  //STRICTLY SETUP CODE
                 &turnHandler,   //Task handle
                 0);             //Core
 
-   xTaskCreatePinnedToCore(  sensorControl,       //Function Name
-                 "sensorControl",     //Task Name
-                 20000,         //Stack size
-                 NULL,         //Task input parameter
-                 2,              //Task priority 
-                &sensorHandler,   //Task handle
-                1);               //core
+  //  xTaskCreatePinnedToCore(  sensorControl,       //Function Name
+  //                "sensorControl",     //Task Name
+  //                20000,         //Stack size
+  //                NULL,         //Task input parameter
+  //                2,              //Task priority 
+  //               &sensorHandler,   //Task handle
+  //               1);               //core
 
   xTaskCreatePinnedToCore(  taskManager,       //Function Name
                 "task manager",     //Task Name
@@ -470,7 +470,7 @@ void shortTOF(void * pvParameters){
   int16_t status, i, j, k;
 
 
-  uint16_t    closest_white_distance = 9999, closest_black_distance = 9999;
+  uint16_t    closest_white_distance = 99999, closest_black_distance = 99999;
   float       closest_white_angle = 0, closest_black_angle = 0;
 
   //Code before here should run on startup
@@ -497,11 +497,11 @@ void shortTOF(void * pvParameters){
       {
         for(k = 0; k < 8; k++)
         {
-            //Check data is valid if there is 1 target and status is 5. If measurment is invalid, set zone to 9999.
+            //Check data is valid if there is 1 target and status is 5. If measurment is invalid, set zone to 99999.
           if(Results_1.target_status[i] != 5 && Results_1.target_status[i] != 6 && Results_1.target_status[i] != 9 && Results_1.nb_target_detected[VL53L5CX_RESOLUTION_8X8] != 1)
           {
-              target_info.target_distance[j][k] = 9999;
-              target_info.target_reflectance[j][k] = 9999;
+              target_info.target_distance[j][k] = 99999;
+              target_info.target_reflectance[j][k] = 99999;
           }
           else
           {
@@ -517,11 +517,11 @@ void shortTOF(void * pvParameters){
       {
         for(k = 8; k < 16; k++)
         {
-            //Check data is valid if there is 1 target and status is 5. If measurment is invalid, set zone to 9999.
+            //Check data is valid if there is 1 target and status is 5. If measurment is invalid, set zone to 99999.
           if(Results_2.target_status[i] != 5 && Results_2.target_status[i] != 6 && Results_2.target_status[i] != 9 && Results_2.nb_target_detected[VL53L5CX_RESOLUTION_8X8] != 1)
           {
-              target_info.target_distance[j][k] = 9999;
-              target_info.target_reflectance[j][k] = 9999;
+              target_info.target_distance[j][k] = 99999;
+              target_info.target_reflectance[j][k] = 99999;
           }
           else
           {
@@ -567,8 +567,8 @@ void shortTOFprocess(void * pvParameters){
 
       //search array for closest black and white zones
       //reset from last iterration
-      target_info.closest_white_distance = 9999;
-      target_info.closest_black_distance = 9999;
+      target_info.closest_white_distance = 99999;
+      target_info.closest_black_distance = 99999;
       for (k = 0; k < 16 ; k++) 
       {
         for (j = 0; j < 8; j++) 
@@ -616,13 +616,17 @@ void shortTOFprocess(void * pvParameters){
       SerialPort.print("\n");
       SerialPort.print("\n");
     
-  
+      targets outputData;
+      outputData.black_angle = target_info.closest_black_angle;
+      outputData.black_distance = target_info.closest_black_distance;
+      outputData.white_angle = target_info.closest_black_angle;
+      outputData.white_distance = target_info.closest_white_distance;
 
       //pass data to decision function
-      if(xQueueSend(srTOFprocQ, &target_info, 0) == pdPASS)
+      if(xQueueSend(combinedSensorQ, &outputData, 0) == pdPASS)
       {
       //start processing task
-      xTaskNotifyGive(sensorHandler);
+      //xTaskNotifyGive(sensorHandler);
       vTaskSuspend(NULL);
       }
       else
@@ -684,14 +688,15 @@ void longTOFprocess(void * pvParameters){
     //suspend Task indefinitely until called by taskmanager
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    lrTOFrawData inputData;
+    targets output_data;
+  
 
     //read new data from Queue once notified by RX
     if(xQueueReceive(lrTOFrawQ, &inputData, 0) == pdPASS){
       //processing goes in here
 
       //pass data to decision function
-      if(xQueueSend(lrTOFprocQ, &inputData, 0) == pdPASS){
+      if(xQueueSend(combinedSensorQ, &outputData, 0) == pdPASS){
         //start processing task
         xTaskNotifyGive(sensorHandler);
         vTaskSuspend(NULL);
@@ -713,57 +718,57 @@ void longTOFprocess(void * pvParameters){
 }
 
 
-void sensorControl(void * pvParameters){
+// void sensorControl(void * pvParameters){
   
-  //Code before here should run on startup?
+//   //Code before here should run on startup?
 
-  while(1){
-    //suspend Task indefinitely until called by taskmanager
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+//   while(1){
+//     //suspend Task indefinitely until called by taskmanager
+//     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    Valid_target_Info srInput;
-    lrTOFrawData lrInput;
+//     targets srInput;
+//     targets lrInput;
 
-    uint8_t new_lr_data_flag = 0;
-    uint8_t new_sr_data_flag = 0;
-
-
-    //read new data from both Queue once notified by Processing Tasks
-    if(xQueueReceive(srTOFprocQ, &srInput, 0) == pdPASS){
-      new_sr_data_flag = 1;
-    }
-    else{
-      Serial.println("Short Range Processing Queue RX fault"); //error message in case Q is full
-      vTaskSuspend(NULL);
-    }
-    if(xQueueReceive(lrTOFprocQ, &srInput, 0) == pdPASS){
-      new_lr_data_flag = 1;
-    }
-    else{
-      Serial.println("Long Range Processing Queue RX fault"); //error message in case Q is full
-      vTaskSuspend(NULL);
-    }
-
-    //decisionmaking based on new data
-    targets output_data;
+//     uint8_t new_lr_data_flag = 0;
+//     uint8_t new_sr_data_flag = 0;
 
 
-    //sending data to Driving side
-    if(xQueueSend(combinedSensorQ, &output_data, 0) == pdPASS){
-      Serial.println("New Target data successfully sent");
-      goingToCan=true;
-      vTaskSuspend(NULL);
-    }
-    else{
-      Serial.println("Unifed sensor data Queue TX fault"); //error message in case Q is full
-      vTaskSuspend(NULL);
-    }
+//     //read new data from both Queue once notified by Processing Tasks
+//     if(xQueueReceive(srTOFprocQ, &srInput, 0) == pdPASS){
+//       new_sr_data_flag = 1;
+//     }
+//     else{
+//       Serial.println("Short Range Processing Queue RX fault"); //error message in case Q is full
+//       vTaskSuspend(NULL);
+//     }
+//     if(xQueueReceive(lrTOFprocQ, &srInput, 0) == pdPASS){
+//       new_lr_data_flag = 1;
+//     }
+//     else{
+//       Serial.println("Long Range Processing Queue RX fault"); //error message in case Q is full
+//       vTaskSuspend(NULL);
+//     }
+
+//     //decisionmaking based on new data
+//     targets output_data;
 
 
-    vTaskSuspend(NULL);
-  }
+//     //sending data to Driving side
+//     if(xQueueSend(combinedSensorQ, &output_data, 0) == pdPASS){
+//       Serial.println("New Target data successfully sent");
+//       goingToCan=true;
+//       vTaskSuspend(NULL);
+//     }
+//     else{
+//       Serial.println("Unifed sensor data Queue TX fault"); //error message in case Q is full
+//       vTaskSuspend(NULL);
+//     }
+
+
+//     vTaskSuspend(NULL);
+//   }
   
-}
+// }
 
 
 void loop() {
