@@ -299,6 +299,8 @@ void driveManager(void * pvParameters){
   int Kp = 1;
   int servoAngle=45;
   float err =0.0;
+  bool canApproach=false;
+  int approachTimer=0;
   while(1){
     Serial.println("Driving"); 
     DCmotor.setSpeed(255);
@@ -315,23 +317,33 @@ void driveManager(void * pvParameters){
 
 
     targets new_targets;
-    if(xQueueReceive(combinedSensorQ, &new_targets, 0) == pdPASS){
-      Serial.print("New targets received from sensors");
 
-      //new sensor data should be used to set angle or something
+    //Set heading - either can if target info is available or heading if not 
+
+    //Global variable is preferrable to queue in this instance since drive manager runs periodically 
+    if(xQueueReceive(combinedSensorQ, &new_targets, 0) == pdPASS || goingToCan == true){
+      err = targets.black_angle;
+      canApproach = true;
+      approachTimer=0;
     }
-    
-    else
+    else if (canApproach==false)
     {
       //IMU PID Loop
       err = headingDEG;
-      Serial.print("Error: ");
-      Serial.println(err);
-      servoAngle = 45-err*Kp;
-      Serial.println("Servo angle:");
-      Serial.println(servoAngle);
-      steerServo.write(servoAngle);
     }
+
+    //Maintains the last can detection for three  seconds, then switches heading to global heading if no detection is made.
+    if (canApproach==true){
+      approachTimer+=1;
+    }
+    else if (canApproach>30){   //maintains angle for three seconds (30 * 100 ms)
+      canApproach=false;
+      approachTimer=0;
+      err= headingDEG;
+    }
+
+    servoAngle = 45-err*Kp;
+
     //is this for debouncing?
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
@@ -688,6 +700,7 @@ void sensorControl(void * pvParameters){
     //sending data to Driving side
     if(xQueueSend(combinedSensorQ, &output_data, 0) == pdPASS){
       Serial.println("New Target data successfully sent");
+      goingToCan=true;
       vTaskSuspend(NULL);
     }
     else{
