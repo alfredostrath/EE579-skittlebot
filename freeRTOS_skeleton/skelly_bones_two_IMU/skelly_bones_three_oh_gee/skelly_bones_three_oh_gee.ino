@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define SerialPort Serial
 
@@ -37,6 +38,8 @@
 
 #define refelction_threshold 50
 
+#define avg_window_length 10
+
 
 
 //srTof typedef
@@ -53,8 +56,8 @@ typedef struct
 
 //lrTof typedef
 typedef struct{
-    uint16_t distance_scan[360];
-    uint16_t reflectance_scan[360];
+    unsigned long TOF_distances[360] = {0};   // length double of scan_angle
+    unsigned int TOF_strengths[360] = {0};    // length double of scan_angle
 } lrTOFrawData;
 
 //unified Target typedef
@@ -93,6 +96,16 @@ bool goingToCan = false;
 
 //srTOF universal temporary string
 char temp_str[64];
+
+//scanning Servo
+int servoPin = 23;  // servo pin (number is number on board)
+Servo myservo;  // servo object to control servo
+int scan_angle = 180;
+
+unsigned char TOF_check = 0;
+
+//skittle width for processing
+float skittle_width = 75.0; // mm (should not change)
 
 
 
@@ -158,6 +171,12 @@ void setup() {                  //STRICTLY SETUP CODE
   steerServo.setPeriodHertz(50);    // standard 50 hz servo
   steerServo.attach(SERVO_PIN, 1000, 2000);
 
+  //scan servo setup
+  myservo.setPeriodHertz(50);           // standard 50 hz servo
+	myservo.attach(servoPin, 400, 2420);  // attaches servo on servoPin to servo object
+
+  //LR TOF setup
+  Serial2.begin(921600, SERIAL_8N1, 16, 17);
 
   //srTOF setup
   shortTOFsetup();
@@ -646,20 +665,151 @@ void shortTOFprocess(void * pvParameters){
 
 }
 
+bool verifyWidth(unsigned long dist, float ang_width) {
+  float expected_ang_width;
+  expected_ang_width = (skittle_width / 2.0 / (float)dist);
+  expected_ang_width = 2.0 * asin(expected_ang_width);
+  
+  // if object width within 1 deg of expected with
+  // if (ang_width <= (expected_ang_width + 5.0) && ang_width >= (expected_ang_width - 5.0)) {  <-- THIS IS THE RIGHT ONE
+    if (ang_width <= (expected_ang_width + 5.0) | ang_width >= (expected_ang_width - 5.0)) {
+    return true;
+  } else {
+    return false;
+  }
+
+}
+
+bool verifyCheckSum(unsigned char data[], unsigned char len){
+  TOF_check = 0;
+
+  for(int k=0;k<len-1;k++)
+  {
+      TOF_check += data[k];
+  }
+
+  if(TOF_check == data[len-1])
+  {
+      // Serial.println("TOF data is ok!");
+      return true;    
+  }else{
+      // Serial.println("TOF data is error!");
+      return false;  
+  }
+
+}
+
 void longTOF(void * pvParameters){
+
+  // FOR SCANNING
+  int pos = 0;        // variable to store the servo position
+  int min_us = 400;   // right side
+  int max_us = 2420;  // left side
+
+  unsigned char TOF_data[32] = {0};   //store 2 TOF frames
+  unsigned char TOF_length = 16;
+  unsigned char TOF_header[3] {0x57,0x00,0xFF};
+  unsigned long TOF_system_time = 0;
+  unsigned long TOF_distance = 0;
+  unsigned char TOF_status = 0;
+  unsigned int TOF_signal = 0;
+ 
+  unsigned long TOF_distances[360] = {0};   // length double of scan_angle
+  unsigned int TOF_strengths[360] = {0};    // length double of scan_angle
 
   //Code before here should run on startup?
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-  while(1){
+  while(1)
+  {
     //stop driving
     DCmotor.setSpeed(255);
+    
+    // SWEEP
+    long last_valid_dist = 1500;  // mm
+    for (pos = 0; pos <= 2*scan_angle; pos += 1) { // goes from 0 degrees to 180 degrees
+      myservo.write((float)pos / 2.0);   // go to position (half degree increments)
+      // delay(1);             // delay to allow reaching position
+      Serial.println((float)pos/2.0);
 
-    //get sensor data
-    lrTOFrawData measureData;
+      // wait for enough ToF data
+      while(Serial2.available()<32) {
+        /* DO NOTHING */
+      }
+
+      if (Serial2.available()>=32) {
+        for(int i=0;i<32;i++)
+        {
+          TOF_data[i] = Serial2.read();
+        }
+      
+        for(int j=0;j<16;j++)
+        {
+          if( (TOF_data[j]==TOF_header[0] && TOF_data[j+1]==TOF_header[1] && TOF_data[j+2]==TOF_header[2]) && (verifyCheckSum(&TOF_data[j],TOF_length)))
+          {
+            if(((TOF_data[j+12]) | (TOF_data[j+13]<<8) )==0) {
+              Serial.println("Out of range!");
+            } else {
+            // if (true) {
+              // Serial.print("TOF id is: ");
+              // Serial.println(TOF_data[j+3],DEC);
+        
+              TOF_system_time = TOF_data[j+4] | TOF_data[j+5]<<8 | TOF_data[j+6]<<16 | TOF_data[j+7]<<24;
+              // Serial.print("TOF system time is: ");
+              // Serial.print(TOF_system_time,DEC);
+              // Serial.println("ms");
+        
+              TOF_distance = (TOF_data[j+8]) | (TOF_data[j+9]<<8) | (TOF_data[j+10]<<16);
+              Serial.print("TOF distance is: ");
+              Serial.print(TOF_distance,DEC);
+              Serial.println("mm");
+        
+              TOF_status = TOF_data[j+11];
+              // Serial.print("TOF status is: ");
+              // Serial.println(TOF_status,DEC);
+        
+              TOF_signal = TOF_data[j+12] | TOF_data[j+13]<<8;
+              Serial.print("TOF signal is: ");
+              Serial.println(TOF_signal,DEC);
+        
+              // Save distances and strengths
+              if (TOF_distance == 0) {
+                TOF_distances[pos] = TOF_distances[pos-1];
+                TOF_strengths[pos] = TOF_signal;
+              } else {
+                TOF_distances[pos] = TOF_distance;  //(TOF_data[j+8]) | (TOF_data[j+9]<<8) | (TOF_data[j+10]<<16);
+                TOF_strengths[pos] = TOF_signal;    //TOF_data[j+12] | TOF_data[j+13]<<8;
+              }
+
+              Serial.print("Compensated distance: ");
+              Serial.print(TOF_distance,DEC);
+              Serial.println("mm");
+            }
+            break;
+          }
+        }
+
+      }
+    }
+
+    //make sure sweep is done
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+
+    //put servo back in starting position  
+    myservo.write(0);   // go to position
+
+    //put data in right output format
+    lrTOFrawData outputData;
+    for(int i=0; i<360; i++)
+    {
+      outputData.TOF_distances[i] = TOF_distances[i];
+      outputData.TOF_strengths[i] = TOF_strengths[i];
+    }
+    
+
 
     //send data on queue
-    if(xQueueSend(lrTOFrawQ, &measureData, 0) == pdPASS){
+    if(xQueueSend(lrTOFrawQ, &outputData, 0) == pdPASS){
       //start processing task
       xTaskNotifyGive(longTOFprocessHandler);
       //restart driving
@@ -680,6 +830,30 @@ void longTOF(void * pvParameters){
 
 
 void longTOFprocess(void * pvParameters){
+
+  // FOR PROCESSING
+  
+
+  signed long TOF_derivatives[360] = {0}; // length double of scan_angle
+  // signed int TOF_stren_derivatives[360] = {0};    // length double of scan_angle
+  unsigned int threshold_der = 200;       // derivative minimum threshold (mm)
+  unsigned int threshold_dist = 7000;     // maximum distance threshold (mm)
+
+  float edge_alpha1 = 999.0;      // first detected edge angle
+  float edge_alpha2 = 999.0;      // second detected edge angle
+  signed long edge_der1 = 0;      // first edge dy/dx        
+  signed long edge_der2 = 0;      // second edge dy/dx 
+  signed int edge_stren_der1 = 0;
+  signed int edge_stren_der2 = 0;
+  unsigned long edge_dist1 = 0;   // first edge distance
+  unsigned long edge_dist2 = 0;   // second edge distance
+  float edges_ang_width = 999.0;  // angular width between detected cans
+  float edges_ang_pos;
+  float edges_dist;
+
+  int avg_window_size = 10; // either side
+  int candidate_idxs[10];    // store candidate indexes of original data array
+  float avg_stren_offset = 10.0;    // brightness filter offset
   
   //Code before here should run on startup
 
@@ -688,24 +862,152 @@ void longTOFprocess(void * pvParameters){
     //suspend Task indefinitely until called by taskmanager
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    targets output_data;
-  
+    lrTOFrawData inputData;
 
     //read new data from Queue once notified by RX
     if(xQueueReceive(lrTOFrawQ, &inputData, 0) == pdPASS){
       //processing goes in here
 
+      // DISPLAY DATA
+    for (int k = 0; k <= 2*scan_angle; k++)
+    {
+      Serial.print(k/2.0);
+      Serial.print(" deg");
+      Serial.print("     ");
+      Serial.print(inputData.TOF_distances[k], DEC);
+      Serial.println(" mm");
+    }
+
+    Serial.println("Scanning done");
+    delay(100);
+    Serial.println("Processing...");
+
+
+    // --- PROCESSING ---
+    int idx = 0;  // index of the candidate in the candidate_idxs array
+    int edge_idx1 = 0;
+    int edge_idx2 = 0;
+    float edge_ang_width;
+    float edges_ang_pos;
+    for (int j = 1; j < 2*scan_angle - 1; j++)
+    {
+
+      // compute derivatives distance
+      if (inputData.TOF_distances[j] > threshold_dist) {
+        TOF_derivatives[j] = 0;
+      } else {
+        TOF_derivatives[j] = inputData.TOF_distances[j+1] - inputData.TOF_distances[j]; // d(dist)/d(alpha)
+      }
+      
+      // store latest -ve edge
+      if (TOF_derivatives[j] < 0 && abs(TOF_derivatives[j]) > threshold_der) {
+        edge_der1 = TOF_derivatives[j];
+        // edge_dist1 = TOF_distances[j+1];
+        edge_alpha1 = (float)j / 2.0;  // scan precision is 0.5 deg
+        // edge_stren_der1 = TOF_stren_derivatives[j+1];
+        // edge_stren1 = TOF_strengths[j+1];
+        edge_idx1 = j+1;
+
+      } 
+      // store latest +ve edge
+      else if (TOF_derivatives[j] > 0 && abs(TOF_derivatives[j]) > threshold_der) {
+        edge_der2 = TOF_derivatives[j];
+        // edge_dist2 = TOF_distances[j];
+        edge_alpha2 = (float)j / 2.0;  // scan precision is 0.5 deg
+        // edge_stren_der2 = TOF_stren_derivatives[j];
+        // edge_stren2 = TOF_strengths[j];
+        edge_idx2 = j;
+
+      }
+      // if -ve & +ve edges found, second edge is after first, and second edge derivative is -ve
+      if (abs(edge_der1) > threshold_der && abs(edge_der2) > threshold_der && edge_alpha2 > edge_alpha1 && edge_der1 < 0) {
+        edges_ang_width = edge_alpha2 - edge_alpha1;
+        edges_ang_pos = edge_alpha2 - edges_ang_width/2.0;  // angular positon of object
+        edges_dist = (edge_dist1 + edge_dist2) / 2.0;       // distance of object
+        // edges_stren = ((float)edge_stren_dist2 + (float)edge_stren_dist1)/2.0;  // reflectivity of object
+
+        // COMPARE TO EXPECTED WIDTH HERE
+        // if (edges_ang_width >)
+        if (verifyWidth(edges_dist, edges_ang_width)) {
+          Serial.println("Potential candidate");
+          Serial.println(edges_ang_pos, DEC);
+          Serial.println(edges_dist, DEC);
+          Serial.println("");
+          Serial.println(edge_dist1, DEC);
+          Serial.println(edge_dist2, DEC);
+
+          // HERE APPEND TO CANDIDATES ARRAY
+          candidate_idxs[idx] = int((edge_idx1 - edge_idx2) / 2);
+        }
+
+        edge_der1 = 0;
+        edge_der2 = 0;
+        edge_alpha1 = 0.0;
+        edge_alpha2 = 0.0;
+      }
+
+      //create output structure
+      targets outputData;
+
+      // HERE NEED TO FILTER 1 BLACK and 1 WHITE TARGET
+      // idea: black done and white done check, with loop
+
+      for (uint i = 0; i <= 10; i++)
+      {
+        int start_idx;
+        int end_idx;
+        int mid_idx;
+        unsigned long black_dist = 99999;
+        unsigned long white_dist = 99999; 
+        if (candidate_idxs[i] - avg_window_length < 0)
+        {
+          start_idx = 0;
+          end_idx = candidate_idxs[i] + avg_window_length;
+        }
+        else if (candidate_idxs[i] + avg_window_length > 360)
+        {
+          start_idx = candidate_idxs[i] + avg_window_length;
+          end_idx = 360;
+        }
+
+        float avg;
+        for (int z = start_idx; z <= end_idx; z++)
+        {
+          avg += (float)inputData.TOF_strengths[z];
+        }
+        avg = (avg / (end_idx - start_idx)) + avg_stren_offset;
+        
+        mid_idx = candidate_idxs[i];
+        
+        // white distances
+        if (inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist) {
+          outputData.white_angle = int(float(mid_idx)/2.0);
+          outputData.white_distance = inputData.TOF_distances[mid_idx];
+        }
+        // black distances
+        else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist){
+          outputData.black_angle = int(float(mid_idx)/2.0);
+          outputData.black_distance = inputData.TOF_distances[mid_idx];
+        }
+
+      }
+
+      
+
       //pass data to decision function
-      if(xQueueSend(combinedSensorQ, &outputData, 0) == pdPASS){
+      if(xQueueSend(combinedSensorQ, &outputData, 0) == pdPASS)
+      {
         //start processing task
         xTaskNotifyGive(sensorHandler);
         vTaskSuspend(NULL);
       }
-      else{
+      else
+      {
         Serial.println("Long Range TOF Proc Queue TX fault"); //error message in case Q is full
         vTaskSuspend(NULL);
       }
     }
+  }
 
     else{
       Serial.println("Long Range TOF Raw Queue RX fault"); //error message in case Q is full
@@ -769,6 +1071,8 @@ void longTOFprocess(void * pvParameters){
 //   }
   
 // }
+
+
 
 
 void loop() {
