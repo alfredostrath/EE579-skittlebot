@@ -194,7 +194,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "drivingManager",     //Task Name
                 20000,         //Stack size
                 NULL,         //Task input parameter
-                1,          //Task priority 
+                2,          //Task priority 
                 &driveHandler, //Task handle
                 0);      //Core
 
@@ -271,10 +271,11 @@ void taskManager(void * pvParameters){
 
 
   //Initial Drive
+  Serial.println("here drive");
   xTaskNotifyGive(driveHandler);
 
   //wait until we are in search area
-  //vTaskDelay(initialDriveTime*(2/3) / portTICK_PERIOD_MS);
+  vTaskDelay(initialDriveTime*(2/3) / portTICK_PERIOD_MS);
 
   
   //serpentine loop
@@ -323,9 +324,12 @@ void driveManager(void * pvParameters){
   float err =0.0;
   bool canApproach=false;
   int approachTimer=0;
-  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+  Serial.print("druve setup");
 
   while(1){
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
     Serial.println("Driving"); 
     Serial.println("here1 ");
     DCmotor.setSpeed(255);
@@ -729,7 +733,7 @@ void longTOF(void * pvParameters){
   while(1)
   {
     //stop driving
-    DCmotor.setSpeed(255);
+    DCmotor.setSpeed(0);
     
     // SWEEP
     long last_valid_dist = 1500;  // mm
@@ -862,11 +866,11 @@ void longTOFprocess(void * pvParameters){
   float avg_stren_offset = 10.0;    // brightness filter offset
   
   //Code before here should run on startup
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
   while(1){
 
     //suspend Task indefinitely until called by taskmanager
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
     lrTOFrawData inputData;
 
