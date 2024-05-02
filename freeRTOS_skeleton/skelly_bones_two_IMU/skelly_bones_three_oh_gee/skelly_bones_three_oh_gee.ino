@@ -30,23 +30,26 @@
 
 #define LPN_PIN_1 3
 #define I2C_RST_PIN_1 4
-#define PWREN_PIN_1 5
 #define I2C_Address_1 0x28
 
 #define LPN_PIN_2 7
 #define I2C_RST_PIN_2 8
-#define PWREN_PIN_2 9
 #define I2C_Address_2 0x27
 
 #define refelction_threshold 50
-#define distance_threshold 20
+
 
 
 //srTof typedef
-typedef struct{
+typedef struct
+{
     uint16_t target_distance[8][16];
-    uint16_t target_angle[8][16];
+    int16_t target_angle[8][16];
     uint16_t target_reflectance[8][16];
+    
+    uint16_t closest_white_distance = 9999, closest_black_distance = 9999;
+    float closest_white_angle = 0, closest_black_angle = 0;
+
 } Valid_target_Info;
 
 //lrTof typedef
@@ -89,7 +92,7 @@ int turnAngle=30;
 
 bool goingToCan = false;
 
-//srTOF output string
+//srTOF universal temporary string
 char temp_str[64];
 
 
@@ -101,6 +104,8 @@ Servo steerServo;
 // srTOFs
 VL53L5CX sensor_vl53l5cx_sat_1(&Wire, LPN_PIN_1, I2C_RST_PIN_1);
 VL53L5CX sensor_vl53l5cx_sat_2(&Wire, LPN_PIN_2, I2C_RST_PIN_2);
+
+Valid_target_Info target_info;
 
 
 void setup() {                  //STRICTLY SETUP CODE
@@ -261,7 +266,7 @@ void taskManager(void * pvParameters){
     xTaskNotifyGive(shortTOFHandler);
 
     //do sweep of LR
-    vTaskSuspend(driveHandler)
+    vTaskSuspend(driveHandler);
     xTaskNotifyGive(longTOFHandler);
 
     //time until we've gone through hit zone
@@ -322,7 +327,7 @@ void driveManager(void * pvParameters){
 
     //Global variable is preferrable to queue in this instance since drive manager runs periodically 
     if(xQueueReceive(combinedSensorQ, &new_targets, 0) == pdPASS || goingToCan == true){
-      err = targets.black_angle;
+      err = new_targets.black_angle;
       canApproach = true;
       approachTimer=0;
     }
@@ -370,21 +375,9 @@ void turn(void * pvParameters){
 void shortTOFsetup(void){
 
   //parameters for setup procedure
-  int16_t status;
+  int16_t status, i, j, k;
+  float angle, angle_step, fov = 85, num_zones = 16;
   
-
-  // Enable PWREN's pins if present
-  if (PWREN_PIN_1 >= 0){
-  
-    pinMode(PWREN_PIN_1, OUTPUT);
-    digitalWrite(PWREN_PIN_1, HIGH);
-    
-    pinMode(PWREN_PIN_2, OUTPUT);
-    digitalWrite(PWREN_PIN_2, HIGH);
-    
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-  
-  }
   // Configure VL53L5CX satellite component.
   sensor_vl53l5cx_sat_1.begin();
   sensor_vl53l5cx_sat_2.begin();
@@ -454,6 +447,20 @@ void shortTOFsetup(void){
   sensor_vl53l5cx_sat_1.vl53l5cx_start_ranging();
   sensor_vl53l5cx_sat_2.vl53l5cx_start_ranging();
 
+  //set angles
+  angle_step = fov/num_zones;
+  
+  angle = (-angle_step * 8) + (float(0.5)*angle_step);
+
+  for (k = 0; k < 16 ; k++) 
+  {
+    for (j = 0; j < 8; j++) 
+    {
+        target_info.target_angle[j][k] = round(angle);
+    }
+    angle += angle_step;
+  } 
+
 }
 
 void shortTOF(void * pvParameters){
@@ -461,9 +468,8 @@ void shortTOF(void * pvParameters){
   VL53L5CX_ResultsData Results_1;
   VL53L5CX_ResultsData Results_2;
   uint8_t NewDataReady = 0;
-  int16_t i, j, k;
+  int16_t status, i, j, k;
 
-  Valid_target_Info target_info;
 
   uint16_t    closest_white_distance = 9999, closest_black_distance = 9999;
   float       closest_white_angle = 0, closest_black_angle = 0;
@@ -488,7 +494,7 @@ void shortTOF(void * pvParameters){
       sensor_vl53l5cx_sat_2.vl53l5cx_get_ranging_data(&Results_2);
     }
       i = 0;
-      for(j = 7; j > 0; j--)
+      for(j = 7; j > -1; j--)
       {
         for(k = 0; k < 8; k++)
         {
@@ -508,7 +514,7 @@ void shortTOF(void * pvParameters){
       }
 
       i = 0;
-      for(j = 7; j > 0; j--)
+      for(j = 7; j > -1; j--)
       {
         for(k = 8; k < 16; k++)
         {
@@ -528,20 +534,6 @@ void shortTOF(void * pvParameters){
       }
 
 
-      //print validated distance array
-      for (j = 0; j < 8; j++) 
-      {
-        for (k = 0; k < 16; k++) 
-        {
-            snprintf(temp_str, 20, "%04d", target_info.target_distance[j][k]);
-            SerialPort.print(temp_str);
-            SerialPort.print("\t");
-        }
-        SerialPort.print("\n");
-      } 
-    //delay to see something in console while debugging
-    //vTaskDelay(5000 / portTICK_PERIOD_MS);
-
     //check if queue transmission was successful
     if(xQueueSend(srTOFrawQ, &target_info, 0) == pdPASS){
       //start processing task
@@ -559,29 +551,89 @@ void shortTOFprocess(void * pvParameters){
   
   //Code before here should run on startup
 
-  while(1){
+  while(1)
+  {
 
     //suspend Task indefinitely until called by taskmanager
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
     Valid_target_Info target_info;
+    int16_t status, i, j, k;
 
     //read new data from Queue once notified by RX
-    if(xQueueReceive(srTOFrawQ, &target_info, 0) == pdPASS){
+    if(xQueueReceive(srTOFrawQ, &target_info, 0) == pdPASS)
+    {
       //processing goes in here
 
-      //pass data to decision function
-      if(xQueueSend(srTOFprocQ, &target_info, 0) == pdPASS){
-        //start processing task
-        xTaskNotifyGive(sensorHandler);
-        vTaskSuspend(NULL);
+
+      //search array for closest black and white zones
+      //reset from last iterration
+      target_info.closest_white_distance = 9999;
+      target_info.closest_black_distance = 9999;
+      for (k = 0; k < 16 ; k++) 
+      {
+        for (j = 0; j < 8; j++) 
+        {
+          //find closest white zone
+          if(target_info.target_distance[j][k] < target_info.closest_white_distance && target_info.target_reflectance[j][k] > refelction_threshold)
+          {
+              target_info.closest_white_distance = target_info.target_distance[j][k];
+              target_info.closest_white_angle = target_info.target_angle[j][k];
+          }
+          //find closest black zone
+          if(target_info.target_distance[j][k] < target_info.closest_black_distance && target_info.target_reflectance[j][k] < refelction_threshold)
+          {
+              target_info.closest_black_distance = target_info.target_distance[j][k];
+              target_info.closest_black_angle = target_info.target_angle[j][k];
+          }
+        }
+      } 
+
+
+      //print validated distance array
+      for (j = 0; j < 8; j++) 
+      {
+        for (k = 0; k < 16; k++) 
+        {
+            snprintf(temp_str, 20, "%04d", target_info.target_distance[j][k]);
+            SerialPort.print(temp_str);
+            SerialPort.print("\t");
+        }
+        SerialPort.print("\n");
       }
-      else{
+
+      SerialPort.print("\n");
+      //print angle array
+      for (j = 0; j < 8; j++) 
+      {
+        for (k = 0; k < 16; k++) 
+        {
+            snprintf(temp_str, 20, "%04d", target_info.target_angle[j][k]);
+            SerialPort.print(temp_str);
+            SerialPort.print("\t");
+        }
+        SerialPort.print("\n");
+      }  
+      SerialPort.print("\n");
+      SerialPort.print("\n");
+    
+  
+
+      //pass data to decision function
+      if(xQueueSend(srTOFprocQ, &target_info, 0) == pdPASS)
+      {
+      //start processing task
+      xTaskNotifyGive(sensorHandler);
+      vTaskSuspend(NULL);
+      }
+      else
+      {
         Serial.println("Short Range TOF Proc Queue TX fault"); //error message in case Q is full
         vTaskSuspend(NULL);
       }
     }
-    else{
+    else
+    {
       Serial.println("Short Range TOF Raw Queue RX fault"); //error message in case Q is full
       vTaskSuspend(NULL);
     }
