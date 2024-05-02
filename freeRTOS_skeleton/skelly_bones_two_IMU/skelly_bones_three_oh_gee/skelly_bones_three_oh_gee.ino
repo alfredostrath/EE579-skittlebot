@@ -252,33 +252,45 @@ void taskManager(void * pvParameters){
   xTaskNotifyGive(driveHandler);
 
   //wait until we are in search area
-  vTaskDelay(initialDriveTime / portTICK_PERIOD_MS);
+  vTaskDelay(initialDriveTime*(2/3) / portTICK_PERIOD_MS);
 
-  //start sensing
-  xTaskNotifyGive(shortTOFHandler);
-  xTaskNotifyGive(longTOFHandler);
-
-  //delay(lengthTime);
-  vTaskDelay(lengthTime / portTICK_PERIOD_MS);
-
-
-  //turn
-  //vTaskSuspend(shortTOFHandler);
-  //vTaskSuspend(longTOFHandler);
   
-  vTaskSuspend(driveHandler);
-  xTaskNotifyGive(turnHandler);
-  vTaskDelay(turnTime / portTICK_PERIOD_MS);
+  //serpentine loop
+  while(1){
+    //start sensing SR
+    xTaskNotifyGive(shortTOFHandler);
 
-  //Start new length
-  vTaskResume(driveHandler);
-  //vTaskResume(shortTOFHandler);
-  //vTaskResume(longTOFHandler);
+    //do sweep of LR
+    vTaskSuspend(driveHandler)
+    xTaskNotifyGive(longTOFHandler);
+
+    //time until we've gone through hit zone
+    vTaskDelay(initialDriveTime*(1/3) / portTICK_PERIOD_MS);
+
+    //delay(lengthTime);
+    vTaskDelay(lengthTime / portTICK_PERIOD_MS);
 
 
-  //Restarts the driving for a search
+    //turn
+    //vTaskSuspend(shortTOFHandler);
+    //vTaskSuspend(longTOFHandler);
+  
+    vTaskSuspend(driveHandler);
+    xTaskNotifyGive(turnHandler);
+    vTaskDelay(turnTime / portTICK_PERIOD_MS);
 
-  // xTaskNotifyGive(turnHandler);
+   //Start new length
+    vTaskResume(driveHandler);
+    //vTaskResume(shortTOFHandler);
+    //vTaskResume(longTOFHandler);
+
+
+    //Restarts the driving for a search
+
+    // xTaskNotifyGive(turnHandler);
+  }
+
+  
   // vTaskDelay(10000 / portTICK_PERIOD_MS);
 }
 
@@ -573,6 +585,9 @@ void longTOF(void * pvParameters){
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
   while(1){
+    //stop driving
+    DCmotor.setSpeed(255);
+
     //get sensor data
     lrTOFrawData measureData;
 
@@ -580,9 +595,14 @@ void longTOF(void * pvParameters){
     if(xQueueSend(lrTOFrawQ, &measureData, 0) == pdPASS){
       //start processing task
       xTaskNotifyGive(longTOFprocessHandler);
+      //restart driving
+      xTaskNotifyGive(driveHandler);
+
     }
     else{
       Serial.println("Long Range TOF Raw Queue TX fault"); //error message in case Q is full
+      //restart driving
+      xTaskNotifyGive(driveHandler);
     }
 
   } 
