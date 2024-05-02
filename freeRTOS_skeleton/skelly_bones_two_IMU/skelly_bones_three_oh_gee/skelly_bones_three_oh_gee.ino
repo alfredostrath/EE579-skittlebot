@@ -23,7 +23,7 @@
 
  #define DC1_PIN 14
  #define DC2_PIN 15
- #define SERVO_PIN 40
+ #define SERVO_PIN 36
 
  //srTOF configs
 #define vl53l5cx_frequency 1
@@ -98,8 +98,7 @@ bool goingToCan = false;
 char temp_str[64];
 
 //scanning Servo
-int servoPin = 23;  // servo pin (number is number on board)
-Servo myservo;  // servo object to control servo
+int servoPin = 35;  // servo pin (number is number on board)
 int scan_angle = 180;
 
 unsigned char TOF_check = 0;
@@ -112,6 +111,7 @@ float skittle_width = 75.0; // mm (should not change)
 CytronMD DCmotor(PWM_PWM,DC1_PIN,DC2_PIN);
 Adafruit_MPU6050 mpu;
 Servo steerServo;
+Servo myservo;  // servo object to control servo
 
 // srTOFs
 VL53L5CX sensor_vl53l5cx_sat_1(&Wire, LPN_PIN_1, I2C_RST_PIN_1);
@@ -253,14 +253,14 @@ void setup() {                  //STRICTLY SETUP CODE
                 "task manager",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input param
-                0,            //Task priority 
+                2,            //Task priority 
                 NULL,         //Task handle
                 0);      //Core
 
 
-
   //start the machine
-  vTaskStartScheduler();
+  //vTaskStartScheduler();
+  Serial.println("here sched2");
 
 }
 
@@ -270,12 +270,11 @@ void taskManager(void * pvParameters){
   // WHILE LOOP TO POLL FOR START SIGNAL
 
 
-
   //Initial Drive
   xTaskNotifyGive(driveHandler);
 
   //wait until we are in search area
-  vTaskDelay(initialDriveTime*(2/3) / portTICK_PERIOD_MS);
+  //vTaskDelay(initialDriveTime*(2/3) / portTICK_PERIOD_MS);
 
   
   //serpentine loop
@@ -324,13 +323,18 @@ void driveManager(void * pvParameters){
   float err =0.0;
   bool canApproach=false;
   int approachTimer=0;
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
   while(1){
     Serial.println("Driving"); 
+    Serial.println("here1 ");
     DCmotor.setSpeed(255);
-
+    Serial.println("here2 ");
     //Sample IMU
     sensors_event_t a,g,temp;
-    mpu.getEvent(&a,&g,&temp);  
+    Serial.println("here3 "); 
+    mpu.getEvent(&a,&g,&temp); 
+    
     Serial.print("Measure:");
     Serial.println(g.gyro.x);                       
     heading=(heading+(IMUerror-g.gyro.x)*0.1);
@@ -395,11 +399,11 @@ void shortTOFsetup(void){
   //parameters for setup procedure
   int16_t status, i, j, k;
   float angle, angle_step, fov = 85, num_zones = 16;
-  
+  Serial.println("here 1");
   // Configure VL53L5CX satellite component.
   sensor_vl53l5cx_sat_1.begin();
   sensor_vl53l5cx_sat_2.begin();
-
+  
   sensor_vl53l5cx_sat_1.init_sensor();
   sensor_vl53l5cx_sat_2.init_sensor();
   
@@ -415,10 +419,10 @@ void shortTOFsetup(void){
     snprintf(temp_str, sizeof(temp_str), "vl53l5cx_set_i2c_address failed, status %u\r\n", status);
     SerialPort.print(temp_str);
   }
-  
+  Serial.println("here 2");
   digitalWrite(LPN_PIN_1, LOW);    // disable VL53L5CX_1
   digitalWrite(LPN_PIN_2, HIGH);   // enable VL53L5CX_2
-
+  
   //set I2C address 2
   status = sensor_vl53l5cx_sat_2.vl53l5cx_set_i2c_address(I2C_Address_2<<1);
   if (status) 
@@ -478,11 +482,11 @@ void shortTOFsetup(void){
     }
     angle += angle_step;
   } 
-
+  Serial.println("here short tof setup");
 }
 
 void shortTOF(void * pvParameters){
-
+  Serial.println("tofs sstarted");
   VL53L5CX_ResultsData Results_1;
   VL53L5CX_ResultsData Results_2;
   uint8_t NewDataReady = 0;
@@ -496,9 +500,10 @@ void shortTOF(void * pvParameters){
 
   //suspend Task indefinitely until called by taskmanager
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  Serial.println("started short tofs");
 
   while(1){
-    
+
     NewDataReady = 0;
     sensor_vl53l5cx_sat_1.vl53l5cx_check_data_ready(&NewDataReady);
     if (NewDataReady) 
@@ -510,6 +515,7 @@ void shortTOF(void * pvParameters){
     if (NewDataReady) 
     {
       sensor_vl53l5cx_sat_2.vl53l5cx_get_ranging_data(&Results_2);
+
     }
       i = 0;
       for(j = 7; j > -1; j--)
