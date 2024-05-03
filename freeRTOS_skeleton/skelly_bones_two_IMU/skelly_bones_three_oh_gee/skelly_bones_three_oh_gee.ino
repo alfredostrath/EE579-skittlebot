@@ -17,23 +17,23 @@
 #define SerialPort Serial
 
 // //Pin declarations I2C
- #define I2C_SDA 1
- #define I2C_SCL 2
+ #define I2C_SDA 5
+ #define I2C_SCL 6
  //#define I2C_RST_PIN 4
 
- #define DC1_PIN 14
- #define DC2_PIN 15
- #define SERVO_PIN 36
+ #define DC1_PIN 1
+ #define DC2_PIN 2
+ #define SERVO_PIN 3
 
  //srTOF configs
 #define vl53l5cx_frequency 1
 
-#define LPN_PIN_1 6
-#define I2C_RST_PIN_1 4
+#define LPN_PIN_1 13
+#define I2C_RST_PIN_1 12
 #define I2C_Address_1 0x28
 
-#define LPN_PIN_2 7
-#define I2C_RST_PIN_2 8
+#define LPN_PIN_2 11
+#define I2C_RST_PIN_2 10
 #define I2C_Address_2 0x27
 
 #define refelction_threshold 50
@@ -97,7 +97,7 @@ int turnAngle=30;
 char temp_str[64];
 
 //scanning Servo
-int servoPin = 35;  // servo pin (number is number on board)
+int servoPin = 4;  // servo pin (number is number on board)
 const int scan_angle = 180;
 const int avg_window_length = 10;
 
@@ -182,7 +182,7 @@ void setup() {                  //STRICTLY SETUP CODE
   Serial.println("Setting up Tofs");
 
   //LR TOF setup
-  Serial2.begin(921600, SERIAL_8N1, 16, 17);
+  Serial2.begin(921600, SERIAL_8N1, 8, 9);
 
   //srTOF setup
   shortTOFsetup();
