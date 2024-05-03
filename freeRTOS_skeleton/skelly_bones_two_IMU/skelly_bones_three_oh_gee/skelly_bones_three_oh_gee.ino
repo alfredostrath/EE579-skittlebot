@@ -84,6 +84,8 @@ QueueHandle_t srTOFprocQ;
 QueueHandle_t lrTOFprocQ;
 QueueHandle_t combinedSensorQ;
 
+bool start= false;
+
 uint initialDriveTime = 6000;
 uint lengthTime = 10000;
 uint turnTime = 1000;
@@ -127,7 +129,7 @@ void setup() {                  //STRICTLY SETUP CODE
 
   //Start I2C bus
   Wire.begin(I2C_SDA,I2C_SCL);
-
+  pinMode(7,OUTPUT);
   //MPU SETUP
 
   if (!mpu.begin()) {
@@ -280,18 +282,24 @@ void setup() {                  //STRICTLY SETUP CODE
 
 void taskManager(void * pvParameters){
   //make sure everything is initiallised
+
+
+  
   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   Serial.println("Task manager is ready for user input");
-
-  //this delay should be replaced by button input
-  vTaskDelay(3000 / portTICK_PERIOD_MS);
   
   // WHILE LOOP TO POLL FOR START SIGNAL
+  while(start=false){
+    if (digitalRead(7)==true){
+      start=true;
+    }
 
+  }
   Serial.println("User has activated driving!");
 
+  //
   //Initial Drive
   xTaskNotifyGive(driveHandler);
   Serial.println(("Driving straight for 5s!"));
@@ -423,9 +431,13 @@ void driveManager(void * pvParameters){
       err= headingDEG;
     }
 
+    if ((new_targets.white_distance<200)&&(new_targets.white_angle <10 ) && (new_targets.white_angle>-10)){
+      steerServo.write(60); //turn away from white can
+    }
+    else{
     servoAngle = 45-err*Kp;
     steerServo.write(servoAngle);
-
+    }
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
@@ -1095,14 +1107,14 @@ void longTOFprocess(void * pvParameters){
         if(inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist && mid_idx > 0)
         {
           white_dist = inputData.TOF_distances[mid_idx];
-          outputData.white_angle = int(mid_idx_float/2.0);
+          outputData.white_angle = 90 - int(mid_idx_float/2.0);
           outputData.white_distance = inputData.TOF_distances[mid_idx];
         }
         // black distances
         else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist && mid_idx>0)
         {
           black_dist = inputData.TOF_distances[mid_idx];
-          outputData.black_angle = int(mid_idx_float/2.0);
+          outputData.black_angle = 90 - int(mid_idx_float/2.0);
           outputData.black_distance = inputData.TOF_distances[mid_idx];
         }
         //default to send invalid target state to be picked up by IMU
