@@ -17,12 +17,12 @@
 #define SerialPort Serial
 
 // //Pin declarations I2C
- #define I2C_SDA 5
- #define I2C_SCL 6
+ #define I2C_SDA 1
+ #define I2C_SCL 2
  //#define I2C_RST_PIN 4
 
- #define DC1_PIN 1
- #define DC2_PIN 2
+ #define DC1_PIN 5
+ #define DC2_PIN 6
  #define SERVO_PIN 3
 
  //srTOF configs
