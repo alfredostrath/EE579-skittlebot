@@ -205,7 +205,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "drivingManager",     //Task Name
                 20000,         //Stack size
                 NULL,         //Task input parameter
-                6,          //Task priority 
+                5,          //Task priority 
                 &driveHandler, //Task handle
                 0);      //Core
 
@@ -248,7 +248,7 @@ void setup() {                  //STRICTLY SETUP CODE
                 "turn",     //Task Name
                 10000,         //Stack size
                 NULL,         //Task input parameter
-                6,              //Task priority 
+                5,              //Task priority 
                 &turnHandler,   //Task handle
                 0);             //Core
 
@@ -289,67 +289,69 @@ void taskManager(void * pvParameters){
   vTaskDelay(3000 / portTICK_PERIOD_MS);
   
   // WHILE LOOP TO POLL FOR START SIGNAL
+
   Serial.println("User has activated driving!");
 
   //Initial Drive
   xTaskNotifyGive(driveHandler);
-
   Serial.println(("Driving straight for 5s!"));
-
-
   //wait until we are in search area
   vTaskDelay(5000 / portTICK_PERIOD_MS);
 
-  //start sensing SR
-  //xTaskNotifyGive(shortTOFHandler);
+
+  //do sweep of LR
+  vTaskSuspend(driveHandler);
+  xTaskNotifyGive(longTOFHandler);
+  //wait until LR is done
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  //once LR is finished
+  Serial.println("Task Manager Alive again");
+  vTaskResume(driveHandler);
+
+  //make sure LR data has reached IMU
+  vTaskDelay(1000/ portTICK_PERIOD_MS);
+
+  //start SR
+  xTaskNotifyGive(shortTOFHandler);
+
+  //delay until we hit end of zone
+  Serial.println("Driving straight now");
+  vTaskDelay(10000 / portTICK_PERIOD_MS);
+
+  
 
   //serpentine loop
   while(1){
-    
+    Serial.println("Turning around in serpentine mode now");
+
+    //Do turn
+    vTaskSuspend(shortTOFHandler);
+    vTaskSuspend(driveHandler);
+    xTaskNotifyGive(turnHandler);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
 
     //do sweep of LR
-    vTaskSuspend(driveHandler);
+    //vTaskSuspend(driveHandler);
     xTaskNotifyGive(longTOFHandler);
-
+    //wait until LR is done
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
+    //once LR is finished
     Serial.println("Task Manager Alive again");
     vTaskResume(driveHandler);
 
     //make sure LR data has reached IMU
     vTaskDelay(1000/ portTICK_PERIOD_MS);
+
     //start SR again
-    xTaskNotifyGive(shortTOFHandler);
+    vTaskResume(shortTOFHandler);
 
     //time until we've gone to hit zone
     Serial.println("Driving straight now");
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
 
-    //time until we've gone through entire zone
-    //vTaskDelay(lengthTime / portTICK_PERIOD_MS);
-
-
-    //turn
-    vTaskSuspend(shortTOFHandler);
-    //vTaskSuspend(longTOFHandler);
-  
-    //vTaskSuspend(driveHandler);
-    xTaskNotifyGive(turnHandler);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-    //Start new length
-    //vTaskResume(driveHandler);
-    
-    //vTaskResume(longTOFHandler);
-
-
-    //Restarts the driving for a search
-
-    // xTaskNotifyGive(turnHandler);
   }
 
-  
-  // vTaskDelay(10000 / portTICK_PERIOD_MS);
 }
 
 
@@ -368,7 +370,7 @@ void driveManager(void * pvParameters){
 
   while(1){
     
-    Serial.println("New drive control iteration");
+    Serial.println("IMU Iteration");
 
     DCmotor.setSpeed(255);
     
@@ -396,12 +398,14 @@ void driveManager(void * pvParameters){
       canApproach = true;
       approachTimer=0;
 
-      Serial.println("DriveManager received new target");
+      Serial.println("IMU new valid Target received");
+      Serial.print("Black Angle: ");
       Serial.println(new_targets.black_angle);
+      Serial.print("Black Distance: ");
       Serial.println(new_targets.black_distance);
 
       //make sure we can read output
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
     }
     else if (canApproach==false)
     {
@@ -434,12 +438,15 @@ void turn(void * pvParameters){
 
   //suspend Task indefinitely until called by taskmanager
   
-
   while(1){
+
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     Serial.println("Turn task called");
 
     steerServo.write(turnAngle);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    
 
     //vTaskSuspend(NULL);
 
@@ -614,7 +621,6 @@ void shortTOF(void * pvParameters){
         }
       }
 
-    Serial.println("SR_output check");
     //check if queue transmission was successful
     if(xQueueSend(srTOFrawQ, &target_info, 0) == pdPASS){
       //start processing task
@@ -624,7 +630,7 @@ void shortTOF(void * pvParameters){
       Serial.println("Short Range TOF Raw Queue TX fault"); //error message in case Q is full
     }
 
-    vTaskDelay(80 / portTICK_PERIOD_MS);
+    vTaskDelay(90 / portTICK_PERIOD_MS);
   }
   
 }
@@ -709,7 +715,7 @@ void shortTOFprocess(void * pvParameters){
       {
       //start processing task
       //xTaskNotifyGive(sensorHandler);
-      Serial.println("Short Range TOF Data passed on successfully");
+      //Serial.println("Short Range TOF Data passed on successfully");
       }
       else
       {
@@ -889,7 +895,7 @@ void longTOF(void * pvParameters){
       xTaskNotifyGive(driveHandler);
       xTaskNotifyGive(taskHandler);
       vTaskDelay(100 / portTICK_PERIOD_MS);
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      
 
     }
     else{
@@ -897,7 +903,7 @@ void longTOF(void * pvParameters){
       //restart driving
       xTaskNotifyGive(driveHandler);
       xTaskNotifyGive(taskHandler);
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      
     }
 
   } 
@@ -1086,16 +1092,25 @@ void longTOFprocess(void * pvParameters){
 
         
         // white distances
-        if(inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist)
+        if(inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist && mid_idx > 0)
         {
+          white_dist = inputData.TOF_distances[mid_idx];
           outputData.white_angle = int(mid_idx_float/2.0);
           outputData.white_distance = inputData.TOF_distances[mid_idx];
         }
         // black distances
-        else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist)
+        else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist && mid_idx>0)
         {
+          black_dist = inputData.TOF_distances[mid_idx];
           outputData.black_angle = int(mid_idx_float/2.0);
           outputData.black_distance = inputData.TOF_distances[mid_idx];
+        }
+        //default to send invalid target state to be picked up by IMU
+        else{
+          outputData.white_angle = 0;
+          outputData.white_distance = 99999;
+          outputData.black_angle = 0;
+          outputData.black_distance = 99999;
         }
 
         
