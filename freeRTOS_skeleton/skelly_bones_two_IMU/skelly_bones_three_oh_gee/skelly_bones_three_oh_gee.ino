@@ -19,6 +19,7 @@
 // //Pin declarations I2C
  #define I2C_SDA 1
  #define I2C_SCL 2
+
  //#define I2C_RST_PIN 4
 
  #define DC1_PIN 5
@@ -132,39 +133,39 @@ void setup() {                  //STRICTLY SETUP CODE
   pinMode(7,OUTPUT);
   //MPU SETUP
 
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1) {
-      Serial.println("Searching for MPU");
-      delay(10);
-    }
-  }
-  mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
-  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_10_HZ);
-  delay(500);
+
+  // //MPU SETUP -> broken now
 
 
-  //Calibration Step 
-  Serial.println("Calibrating IMU");                     
-  for (int i=0; i<20; i++){
-    sensors_event_t a,g,temp;
-    mpu.getEvent(&a,&g,&temp); 
-    //Serial.print("Calibration reading:");
-    //Serial.println(g.gyro.x);
-    //Serial.println(i);
-    delay(100);
+  // if (!mpu.begin()) {
+  //   Serial.println("Failed to find MPU6050 chip");
+  //   while (1) {
+  //     Serial.println("Searching for MPU");
+  //     delay(10);
+  //   }
+  // }
+  // mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+  // mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  // mpu.setFilterBandwidth(MPU6050_BAND_10_HZ);
+  // delay(500);
+
+
+  // //Calibration Step 
+  // Serial.println("Calibrating IMU");                     
+  // for (int i=0; i<20; i++){
+  //   sensors_event_t a,g,temp;
+  //   mpu.getEvent(&a,&g,&temp); 
+  //   //Serial.print("Calibration reading:");
+  //   //Serial.println(g.gyro.x);
+  //   //Serial.println(i);
+  //   delay(100);
   
-    IMUerror=IMUerror + g.gyro.x;
-    //Serial.print("IMU ERROR: ");
-    //Serial.println(IMUerror);
-  }
+  //   IMUerror=IMUerror + g.gyro.x;
+  //   //Serial.print("IMU ERROR: ");
+  //   //Serial.println(IMUerror);
+  // }
  
   IMUerror=IMUerror/20;
-
-  //Serial.print("IMU ERROR: ");
-  //Serial.println(IMUerror);
-  //delay(2000);
 
   Serial.println("Calibrating IMU finished");
 
@@ -186,12 +187,10 @@ void setup() {                  //STRICTLY SETUP CODE
   //LR TOF setup
   Serial2.begin(921600, SERIAL_8N1, 8, 9);
 
-  //srTOF setup
-  shortTOFsetup();
+  //srTOF setup -> broken now
+  //shortTOFsetup();
 
   Serial.println("Tof Setup done"); 
-
-
 
   //create Queues
   srTOFrawQ = xQueueCreate(1, sizeof(Valid_target_Info));
@@ -254,14 +253,6 @@ void setup() {                  //STRICTLY SETUP CODE
                 &turnHandler,   //Task handle
                 0);             //Core
 
-  //  xTaskCreatePinnedToCore(  sensorControl,       //Function Name
-  //                "sensorControl",     //Task Name
-  //                20000,         //Stack size
-  //                NULL,         //Task input parameter
-  //                2,              //Task priority 
-  //               &sensorHandler,   //Task handle
-  //               1);               //core
-
   xTaskCreatePinnedToCore(  taskManager,       //Function Name
                 "task manager",     //Task Name
                 10000,         //Stack size
@@ -319,8 +310,8 @@ void taskManager(void * pvParameters){
   //make sure LR data has reached IMU
   vTaskDelay(1000/ portTICK_PERIOD_MS);
 
-  //start SR
-  xTaskNotifyGive(shortTOFHandler);
+  //start SR -> broken now
+  //xTaskNotifyGive(shortTOFHandler);
 
   //delay until we hit end of zone
   Serial.println("Driving straight now");
@@ -340,7 +331,6 @@ void taskManager(void * pvParameters){
 
 
     //do sweep of LR
-    //vTaskSuspend(driveHandler);
     xTaskNotifyGive(longTOFHandler);
     //wait until LR is done
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -351,8 +341,8 @@ void taskManager(void * pvParameters){
     //make sure LR data has reached IMU
     vTaskDelay(1000/ portTICK_PERIOD_MS);
 
-    //start SR again
-    vTaskResume(shortTOFHandler);
+    //start SR again -> broken now
+    //vTaskResume(shortTOFHandler);
 
     //time until we've gone to hit zone
     Serial.println("Driving straight now");
@@ -378,17 +368,17 @@ void driveManager(void * pvParameters){
 
   while(1){
     
-    Serial.println("IMU Iteration");
+    //Serial.println("IMU Iteration");
 
     DCmotor.setSpeed(255);
     
-    //Sample IMU
-    sensors_event_t a,g,temp;
-    mpu.getEvent(&a,&g,&temp); 
+    // //Sample IMU -> broken now
+    // sensors_event_t a,g,temp;
+    // mpu.getEvent(&a,&g,&temp); 
     
     //Serial.print("Measure:");
     //Serial.println(g.gyro.x);                       
-    heading=(heading+(IMUerror-g.gyro.x)*0.1);
+    //heading=(heading+(IMUerror-g.gyro.x)*0.1);
     //Serial.print("Heading:");
     headingDEG = heading *(180/3.14159);
     //Serial.println(headingDEG);
@@ -447,8 +437,6 @@ void driveManager(void * pvParameters){
 void turn(void * pvParameters){
 
   Serial.println("Turn task ready");
-
-  //suspend Task indefinitely until called by taskmanager
   
   while(1){
 
@@ -457,10 +445,6 @@ void turn(void * pvParameters){
 
     steerServo.write(turnAngle);
     vTaskDelay(200 / portTICK_PERIOD_MS);
-
-    
-
-    //vTaskSuspend(NULL);
 
   }
 }
@@ -747,12 +731,14 @@ void shortTOFprocess(void * pvParameters){
 
 bool verifyWidth(unsigned long dist, float ang_width) {
   float expected_ang_width;
-  expected_ang_width = (skittle_width / 2.0 / (float)dist);
+  float dist_float = dist;
+  expected_ang_width = (skittle_width / 2.0 / dist_float);
   expected_ang_width = 2.0 * asin(expected_ang_width);
+
   
   // if object width within 1 deg of expected with
   // if (ang_width <= (expected_ang_width + 5.0) && ang_width >= (expected_ang_width - 5.0)) {  <-- THIS IS THE RIGHT ONE
-  if (ang_width <= (expected_ang_width + 5.0) | ang_width >= (expected_ang_width - 5.0))
+  if (ang_width <= (expected_ang_width + 2) | ang_width >= (expected_ang_width - 2))
   {
     return true;
   } 
@@ -959,6 +945,10 @@ void longTOFprocess(void * pvParameters){
   
 
   while(1){
+    //initialise idxs with zero becaue for some weird reason C doesnt do that
+    for (int p=0; p<10; p++){
+      candidate_idxs[p]=0;
+    }
 
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     Serial.println("LR TOF processing task started");
@@ -1008,7 +998,7 @@ void longTOFprocess(void * pvParameters){
         if (TOF_derivatives[j] < 0 && abs(TOF_derivatives[j]) > threshold_der)
         {
           edge_der1 = TOF_derivatives[j];
-          // edge_dist1 = TOF_distances[j+1];
+          edge_dist1 = inputData.TOF_distances[j+1];
           edge_alpha1 = (float)j / 2.0;  // scan precision is 0.5 deg
           // edge_stren_der1 = TOF_stren_derivatives[j+1];
           // edge_stren1 = TOF_strengths[j+1];
@@ -1019,7 +1009,7 @@ void longTOFprocess(void * pvParameters){
         else if (TOF_derivatives[j] > 0 && abs(TOF_derivatives[j]) > threshold_der)
         {
           edge_der2 = TOF_derivatives[j];
-          // edge_dist2 = TOF_distances[j];
+          edge_dist2 = inputData.TOF_distances[j];
           edge_alpha2 = (float)j / 2.0;  // scan precision is 0.5 deg
           // edge_stren_der2 = TOF_stren_derivatives[j];
           // edge_stren2 = TOF_strengths[j];
@@ -1033,25 +1023,17 @@ void longTOFprocess(void * pvParameters){
           edges_ang_pos = edge_alpha2 - edges_ang_width/2.0;  // angular positon of object
           edges_dist = (edge_dist1 + edge_dist2) / 2.0;       // distance of object
           // edges_stren = ((float)edge_stren_dist2 + (float)edge_stren_dist1)/2.0;  // reflectivity of object
-
           // COMPARE TO EXPECTED WIDTH HERE
           // if (edges_ang_width >)
           if (verifyWidth(edges_dist, edges_ang_width))
           {
-            Serial.println("Potential candidate");
-            Serial.println(edges_ang_pos, DEC);
-            Serial.println(edges_dist, DEC);
-            Serial.println("");
-            Serial.println(edge_dist1, DEC);
-            Serial.println(edge_dist2, DEC);
-
+            // Serial.println("Potential candidate");
+            // Serial.println(edges_ang_pos, DEC);
+            // Serial.println(edges_dist, DEC);
+           
             // HERE APPEND TO CANDIDATES ARRAY
             if (idx<10){
-              Serial.print("Candidate_idx old: ");
-              Serial.println(candidate_idxs[idx]);
-              candidate_idxs[idx] = int((edge_idx2 - edge_idx1) / 2);
-              Serial.print("Candidate_idx new: ");
-              Serial.println(candidate_idxs[idx]);
+              candidate_idxs[idx] = int(edge_idx1 + ((edge_idx2 - edge_idx1) / 2));
               idx += 1;
             }
             
@@ -1078,7 +1060,10 @@ void longTOFprocess(void * pvParameters){
       int black_dist = 99999;
       int white_dist = 99999;
       float avg = 0.0;
-      float mid_idx_float;
+      
+
+      int valid_white = 0;
+      int valid_black = 0;
 
       for (int g = 0; g < 10; g++)
       { 
@@ -1089,8 +1074,12 @@ void longTOFprocess(void * pvParameters){
         }
         else if (candidate_idxs[g] + avg_window_length > 359)
         {
-          start_idx = candidate_idxs[g] + avg_window_length;
+          start_idx = candidate_idxs[g] - avg_window_length;
           end_idx = 359;
+        }
+        else{
+          start_idx = candidate_idxs[g] - avg_window_length;
+          end_idx = candidate_idxs[g] + avg_window_length;
         }
 
         
@@ -1101,26 +1090,37 @@ void longTOFprocess(void * pvParameters){
         avg = (avg / (end_idx - start_idx)) + avg_stren_offset;
         
         mid_idx = candidate_idxs[g];
-
         
         // white distances
         if(inputData.TOF_strengths[mid_idx] > avg && inputData.TOF_distances[mid_idx] < white_dist && mid_idx > 0)
         {
+          valid_white=1;
           white_dist = inputData.TOF_distances[mid_idx];
           outputData.white_angle = 90 - int(mid_idx_float/2.0);
           outputData.white_distance = inputData.TOF_distances[mid_idx];
+          Serial.println("Found White Skittle at: (deg, dist)");
+          Serial.println(90-int(mid_idx/2.0));
+          Serial.println(inputData.TOF_distances[mid_idx]);
         }
         // black distances
         else if (inputData.TOF_strengths[mid_idx] <= avg && inputData.TOF_distances[mid_idx] < black_dist && mid_idx>0)
         {
+          valid_black=1;
           black_dist = inputData.TOF_distances[mid_idx];
           outputData.black_angle = 90 - int(mid_idx_float/2.0);
           outputData.black_distance = inputData.TOF_distances[mid_idx];
+          Serial.println("Found Black Skittle at: (deg, dist)");
+          Serial.println(90-int(mid_idx/2.0));
+          Serial.println(inputData.TOF_distances[mid_idx]);
         }
         //default to send invalid target state to be picked up by IMU
-        else{
+        else if(valid_white==0)
+        {
           outputData.white_angle = 0;
           outputData.white_distance = 99999;
+        }
+        else if(valid_black==0)
+        {
           outputData.black_angle = 0;
           outputData.black_distance = 99999;
         }
