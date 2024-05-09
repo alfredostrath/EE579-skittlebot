@@ -1,1 +1,1 @@
-# Pimp My MSP430
+# EE579 Skittlebot
